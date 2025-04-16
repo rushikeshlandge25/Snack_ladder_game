@@ -1,1 +1,390 @@
+import pygame
+import random
+import sys
 
+# Initialize pygame
+pygame.init()
+WIDTH, HEIGHT = 800, 600
+BOARD_SIZE = 500
+GRID_SIZE = 10
+CELL_SIZE = BOARD_SIZE // GRID_SIZE
+PLAYER_RADIUS = 15
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+GRAY = (200, 200, 200)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+PURPLE = (128, 0, 128)
+ORANGE = (255, 165, 0)
+BOARD_COLOR = (245, 245, 220)
+GRID_COLOR = (210, 210, 210)
+PLAYER_COLORS = [RED, BLUE, GREEN, YELLOW, PURPLE, ORANGE]
+
+# Snake and ladder positions
+snakes = {16: 6, 48: 26, 49: 11, 56: 53, 62: 19, 64: 60, 87: 24, 93: 73, 95: 75, 98: 78}
+ladders = {1: 38, 4: 14, 9: 31, 21: 42, 28: 84, 36: 44, 51: 67, 71: 91, 80: 100}
+
+# Setup screen and fonts
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Snake and Ladders")
+font = pygame.font.SysFont('Arial', 24)
+small_font = pygame.font.SysFont('Arial', 18)
+large_font = pygame.font.SysFont('Arial', 36)
+
+def position_to_coordinates(position):
+    position -= 1  # Convert to 0-99
+    row = GRID_SIZE - 1 - position // GRID_SIZE
+    col = position % GRID_SIZE if row % 2 == 0 else (GRID_SIZE - 1) - (position % GRID_SIZE)
+    return (150 + col * CELL_SIZE + CELL_SIZE // 2, 50 + row * CELL_SIZE + CELL_SIZE // 2)
+
+def draw_board():
+    # Board background
+    pygame.draw.rect(screen, BOARD_COLOR, (150, 50, BOARD_SIZE, BOARD_SIZE))
+    
+    # Grid lines
+    for i in range(GRID_SIZE + 1):
+        pygame.draw.line(screen, GRID_COLOR, (150, 50 + i * CELL_SIZE), (150 + BOARD_SIZE, 50 + i * CELL_SIZE), 2)
+        pygame.draw.line(screen, GRID_COLOR, (150 + i * CELL_SIZE, 50), (150 + i * CELL_SIZE, 50 + BOARD_SIZE), 2)
+    
+    # Numbers
+    for i in range(1, 101):
+        pos = position_to_coordinates(i)
+        text = small_font.render(str(i), True, BLACK)
+        screen.blit(text, (pos[0] - text.get_width()//2, pos[1] - 15))
+    
+    # Snakes
+    for start, end in snakes.items():
+        pygame.draw.line(screen, RED, position_to_coordinates(start), position_to_coordinates(end), 5)
+        pygame.draw.circle(screen, RED, position_to_coordinates(start), 8)
+        pygame.draw.circle(screen, (150, 0, 0), position_to_coordinates(end), 6)
+    
+    # Ladders
+    for start, end in ladders.items():
+        start_pos = position_to_coordinates(start)
+        end_pos = position_to_coordinates(end)
+        pygame.draw.line(screen, GREEN, start_pos, end_pos, 5)
+        
+        # Ladder rungs
+        dist = ((end_pos[0] - start_pos[0])**2 + (end_pos[1] - start_pos[1])**2)**0.5
+        num_rungs = max(2, int(dist // 40))
+        for i in range(1, num_rungs):
+            ratio = i / num_rungs
+            x = start_pos[0] + (end_pos[0] - start_pos[0]) * ratio
+            y = start_pos[1] + (end_pos[1] - start_pos[1]) * ratio
+            dx, dy = end_pos[0] - start_pos[0], end_pos[1] - start_pos[1]
+            px, py = -dy/dist * 10, dx/dist * 10
+            pygame.draw.line(screen, (100, 200, 100), (x - px, y - py), (x + px, y + py), 3)
+
+def draw_dice(value, x, y):
+    # Dice box
+    pygame.draw.rect(screen, WHITE, (x, y, 80, 80))
+    pygame.draw.rect(screen, BLACK, (x, y, 80, 80), 2)
+    
+    # Dots based on value
+    dots = {
+        1: [(0.5, 0.5)],
+        2: [(0.25, 0.25), (0.75, 0.75)],
+        3: [(0.25, 0.25), (0.5, 0.5), (0.75, 0.75)],
+        4: [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)],
+        5: [(0.25, 0.25), (0.75, 0.25), (0.5, 0.5), (0.25, 0.75), (0.75, 0.75)],
+        6: [(0.25, 0.25), (0.75, 0.25), (0.25, 0.5), (0.75, 0.5), (0.25, 0.75), (0.75, 0.75)]
+    }
+    
+    for dot_x, dot_y in dots[value]:
+        pygame.draw.circle(screen, BLACK, (int(x + dot_x * 80), int(y + dot_y * 80)), 8)
+
+def draw_players(players, names, current=None):
+    # Draw all players
+    for i, pos in enumerate(players):
+        if pos > 0:  # Only draw if player is on board
+            player_pos = position_to_coordinates(pos)
+            # Offset multiple players in same position
+            offset = i * 5 - (len(players)-1) * 2.5
+            adjusted_pos = (player_pos[0] + offset, player_pos[1])
+            # Highlight current player
+            pygame.draw.circle(screen, PLAYER_COLORS[i % len(PLAYER_COLORS)], adjusted_pos, 
+                              PLAYER_RADIUS + (3 if i == current else 0))
+            name_text = small_font.render(names[i], True, BLACK)
+            screen.blit(name_text, (adjusted_pos[0] - name_text.get_width()//2, adjusted_pos[1] + 20))
+
+def get_input(prompt, x=WIDTH//2, y=HEIGHT//2):
+    input_box = pygame.Rect(x - 100, y, 200, 32)
+    color = pygame.Color('lightskyblue3')
+    active = True
+    text = ''
+    
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN:
+                    return text
+                elif event.key == pygame.K_BACKSPACE:
+                    text = text[:-1]
+                else:
+                    text += event.unicode
+        
+        screen.fill(WHITE)
+        # Show prompt
+        prompt_surf = font.render(prompt, True, BLACK)
+        screen.blit(prompt_surf, (x - prompt_surf.get_width()//2, y - 40))
+        
+        # Show input box and text
+        txt_surface = font.render(text, True, color)
+        width = max(200, txt_surface.get_width() + 10)
+        input_box.w = width
+        input_box.x = x - width//2
+        pygame.draw.rect(screen, color, input_box, 2)
+        screen.blit(txt_surface, (input_box.x + 5, input_box.y + 5))
+        pygame.display.flip()
+
+def roll_dice_and_move(player_id, position, players, names):
+    # Animate dice roll
+    dice_x, dice_y = WIDTH - 120, HEIGHT//2 - 40
+    for _ in range(8):
+        value = random.randint(1, 6)
+        screen.fill(WHITE, (dice_x, dice_y, 80, 80))
+        draw_dice(value, dice_x, dice_y)
+        pygame.display.flip()
+        pygame.time.delay(80)
+    
+    # Final dice value
+    dice = random.randint(1, 6)
+    screen.fill(WHITE, (dice_x, dice_y, 80, 80))
+    draw_dice(dice, dice_x, dice_y)
+    
+    # Show dice result
+    message = f"{names[player_id]} rolled a {dice}"
+    msg_surface = font.render(message, True, BLACK)
+    screen.blit(msg_surface, (WIDTH//2 - msg_surface.get_width()//2, HEIGHT - 150))
+    pygame.display.flip()
+    pygame.time.delay(800)
+    
+    # Calculate new position
+    new_position = position + dice
+    
+    # Handle going beyond 100
+    if new_position > 100:
+        message = f"Need exact roll to finish. Staying at {position}"
+        msg_surface = font.render(message, True, BLACK)
+        screen.blit(msg_surface, (WIDTH//2 - msg_surface.get_width()//2, HEIGHT - 100))
+        pygame.display.flip()
+        pygame.time.delay(1000)
+        return position
+    
+    # Animate movement
+    for step in range(dice):
+        curr_pos = position + step + 1
+        screen.fill(WHITE)
+        draw_board()
+        draw_dice(dice, dice_x, dice_y)
+        # Draw all players with current player at updated position
+        temp_players = players.copy()
+        temp_players[player_id] = curr_pos
+        draw_players(temp_players, names, player_id)
+        pygame.display.flip()
+        pygame.time.delay(200)
+    
+    # Check for snake or ladder
+    final_pos = new_position
+    if new_position in snakes:
+        message = f"Snake! {new_position} -> {snakes[new_position]}"
+        msg_surface = font.render(message, True, RED)
+        screen.blit(msg_surface, (WIDTH//2 - msg_surface.get_width()//2, HEIGHT - 100))
+        pygame.display.flip()
+        pygame.time.delay(1000)
+        
+        # Animate snake slide
+        start_pos = position_to_coordinates(new_position)
+        end_pos = position_to_coordinates(snakes[new_position])
+        for i in range(10):
+            ratio = i / 9
+            x = start_pos[0] + (end_pos[0] - start_pos[0]) * ratio
+            y = start_pos[1] + (end_pos[1] - start_pos[1]) * ratio
+            
+            screen.fill(WHITE)
+            draw_board()
+            draw_dice(dice, dice_x, dice_y)
+            
+            # Draw other players
+            temp_players = players.copy()
+            for j in range(len(players)):
+                if j != player_id:
+                    temp_players[j] = players[j]
+                else:
+                    # Don't use position_to_coordinates to avoid conversions
+                    player_pos = (int(x), int(y))
+                    pygame.draw.circle(screen, PLAYER_COLORS[j % len(PLAYER_COLORS)], 
+                                      player_pos, PLAYER_RADIUS)
+                    name_text = small_font.render(names[j], True, BLACK)
+                    screen.blit(name_text, (player_pos[0] - name_text.get_width()//2, player_pos[1] + 20))
+            
+            screen.blit(msg_surface, (WIDTH//2 - msg_surface.get_width()//2, HEIGHT - 100))
+            pygame.display.flip()
+            pygame.time.delay(100)
+        
+        final_pos = snakes[new_position]
+        
+    elif new_position in ladders:
+        message = f"Ladder! {new_position} -> {ladders[new_position]}"
+        msg_surface = font.render(message, True, GREEN)
+        screen.blit(msg_surface, (WIDTH//2 - msg_surface.get_width()//2, HEIGHT - 100))
+        pygame.display.flip()
+        pygame.time.delay(1000)
+        
+        # Animate ladder climb
+        start_pos = position_to_coordinates(new_position)
+        end_pos = position_to_coordinates(ladders[new_position])
+        for i in range(10):
+            ratio = i / 9
+            x = start_pos[0] + (end_pos[0] - start_pos[0]) * ratio
+            y = start_pos[1] + (end_pos[1] - start_pos[1]) * ratio
+            
+            screen.fill(WHITE)
+            draw_board()
+            draw_dice(dice, dice_x, dice_y)
+            
+            # Draw other players
+            temp_players = players.copy()
+            for j in range(len(players)):
+                if j != player_id:
+                    temp_players[j] = players[j]
+                else:
+                    # Don't use position_to_coordinates to avoid conversions
+                    player_pos = (int(x), int(y))
+                    pygame.draw.circle(screen, PLAYER_COLORS[j % len(PLAYER_COLORS)], 
+                                      player_pos, PLAYER_RADIUS)
+                    name_text = small_font.render(names[j], True, BLACK)
+                    screen.blit(name_text, (player_pos[0] - name_text.get_width()//2, player_pos[1] + 20))
+            
+            screen.blit(msg_surface, (WIDTH//2 - msg_surface.get_width()//2, HEIGHT - 100))
+            pygame.display.flip()
+            pygame.time.delay(100)
+        
+        final_pos = ladders[new_position]
+    
+    return final_pos
+
+def game_loop():
+    # Get number of players
+    num_str = get_input("Enter number of players (2-6):")
+    try:
+        num_players = min(max(int(num_str), 2), 6)  # Ensure between 2-6
+    except ValueError:
+        num_players = 2
+    
+    # Get player names
+    players = [1] * num_players  # All start at position 1
+    names = []
+    for i in range(num_players):
+        name = get_input(f"Enter name for Player {i+1}:")
+        names.append(name if name else f"Player {i+1}")
+    
+    # Main game loop
+    current_player = 0
+    
+    while True:
+        # Display board and players
+        screen.fill(WHITE)
+        draw_board()
+        draw_players(players, names, current_player)
+        
+        # Draw player stats
+        for i in range(num_players):
+            color = PLAYER_COLORS[i % len(PLAYER_COLORS)]
+            bg_color = (230, 230, 230) if i == current_player else WHITE
+            pygame.draw.rect(screen, bg_color, (660, 100 + i*40, 120, 30))
+            player_info = font.render(f"{names[i]}: {players[i]}", True, color)
+            screen.blit(player_info, (670, 105 + i*40))
+        
+        # Draw dice area
+        pygame.draw.rect(screen, GRAY, (WIDTH - 130, HEIGHT//2 - 50, 100, 100))
+        draw_dice(1, WIDTH - 120, HEIGHT//2 - 40)
+        
+        # Turn information
+        turn_text = font.render(f"{names[current_player]}'s turn - Press SPACE to roll", True, BLACK)
+        screen.blit(turn_text, (WIDTH//2 - turn_text.get_width()//2, HEIGHT - 170))
+        pygame.display.flip()
+        
+        # Wait for roll
+        while True:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        # Roll and move
+                        players[current_player] = roll_dice_and_move(
+                            current_player, players[current_player], players, names)
+                        
+                        # Check for winner
+                        if players[current_player] == 100:
+                            # Victory screen
+                            screen.fill(WHITE)
+                            draw_board()
+                            draw_players(players, names)
+                            
+                            win_text = large_font.render(f"{names[current_player]} wins!", True, BLACK)
+                            pygame.draw.rect(screen, (255, 255, 200), 
+                                          (WIDTH//2 - win_text.get_width()//2 - 20, HEIGHT//2 - 50, 
+                                           win_text.get_width() + 40, 100))
+                            screen.blit(win_text, (WIDTH//2 - win_text.get_width()//2, HEIGHT//2 - 30))
+                            
+                            again_text = font.render("Press SPACE to play again or ESC to quit", True, BLACK)
+                            screen.blit(again_text, (WIDTH//2 - again_text.get_width()//2, HEIGHT//2 + 20))
+                            pygame.display.flip()
+                            
+                            # Wait for player decision
+                            waiting = True
+                            while waiting:
+                                for e in pygame.event.get():
+                                    if e.type == pygame.QUIT:
+                                        pygame.quit()
+                                        sys.exit()
+                                    if e.type == pygame.KEYDOWN:
+                                        if e.key == pygame.K_SPACE:
+                                            return game_loop()  # Restart game
+                                        elif e.key == pygame.K_ESCAPE:
+                                            pygame.quit()
+                                            sys.exit()
+                        
+                        # Next player
+                        current_player = (current_player + 1) % num_players
+                        goto_next_player = True
+                        break
+                    elif event.key == pygame.K_ESCAPE:
+                        pygame.quit()
+                        sys.exit()
+            
+            if 'goto_next_player' in locals() and goto_next_player:
+                del goto_next_player
+                break
+
+def main():
+    # Welcome screen
+    screen.fill(WHITE)
+    title_text = large_font.render("Snake and Ladders", True, BLACK)
+    screen.blit(title_text, (WIDTH//2 - title_text.get_width()//2, HEIGHT//4))
+    welcome_text = font.render("Press any key to start", True, BLACK)
+    screen.blit(welcome_text, (WIDTH//2 - welcome_text.get_width()//2, HEIGHT//2))
+    pygame.display.flip()
+    
+    # Wait for user input
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
+                game_loop()
+                return
+
+if __name__ == "__main__":
+    main()
